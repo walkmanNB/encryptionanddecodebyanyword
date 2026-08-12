@@ -3,7 +3,7 @@ name: Build and Publish App (Windows EXE & Android APK)
 on:
   push:
     paths:
-      - 'test.py'
+      - 'main.py'
   workflow_dispatch:
 
 jobs:
@@ -20,14 +20,20 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Verify Repository Files
+        shell: powershell
+        run: |
+          Get-ChildItem -Path .
+
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller flet
 
       - name: Build Windows EXE
+        shell: powershell
         run: |
-          pyinstaller --noconsole --onefile --name="EncryptionTool_Win" test.py
+          pyinstaller --noconsole --onefile --name="EncryptionTool_Win" "$env:GITHUB_WORKSPACE\main.py"
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v5
@@ -67,6 +73,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install flet
 
+      # 采用 Flet 默认标准 main.py 构建
       - name: Build Android APK
         run: |
           flet build apk --verbose
@@ -77,7 +84,7 @@ jobs:
           name: EncryptionTool_Android_APK
           path: build/apk/*.apk
 
-  # 3. 自动发布 Release
+  # 3. 自动发布到 Releases 页面
   publish-release:
     name: Publish to GitHub Releases
     needs: [build-windows, build-android]
@@ -107,13 +114,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_name.outputs.tag }}
-          name: "加解密工具全平台版本 (${{ steps.tag_name.outputs.tag }})"
+          name: "全隐蔽加解密工具全平台版本 (${{ steps.tag_name.outputs.tag }})"
           body: |
-            🎉 **云端自动构建完成！**
+            🎉 **云端自动打包构建完成！**
             
             包含以下软件包：
-            - 💻 **Windows 程序**: `EncryptionTool_Win.exe`
-            - 📱 **Android 安装包**: `.apk`
+            - 💻 **Windows 独立执行程序**: `EncryptionTool_Win.exe`
+            - 📱 **Android 原生安装包**: `.apk`
           draft: false
           prerelease: false
           files: release_files/*
