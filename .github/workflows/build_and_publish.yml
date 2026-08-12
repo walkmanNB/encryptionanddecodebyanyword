@@ -3,7 +3,7 @@ name: Build and Publish App (Windows EXE & Android APK)
 on:
   push:
     paths:
-      - 'test.py'
+      - 'main.py'
   workflow_dispatch:
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
 
       - name: Build Windows EXE
         run: |
-          pyinstaller --noconsole --onefile --collect-all flet --name="EncryptionTool_Win" test.py
+          pyinstaller --noconsole --onefile --collect-all flet --name="EncryptionTool_Win" main.py
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4.6.1
@@ -80,7 +80,7 @@ jobs:
           path: build/apk/*.apk
 
   # ==========================================
-  # 3. 发布到 GitHub Releases 页面
+  # 3. 发布到 GitHub Releases
   # ==========================================
   publish-release:
     name: Publish to GitHub Releases
