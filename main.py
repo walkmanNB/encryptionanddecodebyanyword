@@ -2,18 +2,24 @@ import base64
 import os
 import random
 import string
+import sys
 import flet as ft
 from datetime import datetime
 
 # ==========================================
-# 强制环境检测：只要 Windows/桌面能调起 Tkinter 就绝不触发 Flet FilePicker
+# 环境识别：仅在 Windows/Desktop 环境下导入 Tkinter
 # ==========================================
-try:
-    import tkinter as tk
-    from tkinter import filedialog
-    USE_DESKTOP_TK = True
-except Exception:
-    USE_DESKTOP_TK = False
+IS_ANDROID = "android" in sys.platform.lower() or os.environ.get("ANDROID_ARGUMENT") is not None
+
+if not IS_ANDROID:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        HAS_TKINTER = True
+    except ImportError:
+        HAS_TKINTER = False
+else:
+    HAS_TKINTER = False
 
 
 class CustomCompactCipher:
@@ -95,10 +101,8 @@ class CustomCompactCipher:
         return raw_bytes, original_filename
 
 
-# ==========================================
-# Windows 桌面专用窗口工具（置顶弹窗）
-# ==========================================
-def tk_get_file(title="选择文件", filetypes=[("所有文件", "*.*")]):
+# Windows 桌面专用对话框函数
+def tk_open_file(title="选择文件", filetypes=[("所有文件", "*.*")]):
     root = tk.Tk()
     root.withdraw()
     root.attributes('-topmost', True)
@@ -106,7 +110,7 @@ def tk_get_file(title="选择文件", filetypes=[("所有文件", "*.*")]):
     root.destroy()
     return path
 
-def tk_put_file(title="保存文件", initialfile="", defaultextension=""):
+def tk_save_file(title="保存文件", initialfile="", defaultextension=""):
     root = tk.Tk()
     root.withdraw()
     root.attributes('-topmost', True)
@@ -155,16 +159,12 @@ def main(page: ft.Page):
 
     runtime_data = {"mode": None, "encoded_text": "", "restored_bytes": b""}
 
-    # ==========================================
-    # 只有在没有 Tkinter 的环境（Android 端）下才注册 FilePicker
-    # ==========================================
-    open_picker = None
-    save_picker = None
-
-    if not USE_DESKTOP_TK:
-        def on_mobile_pick(e):
+    # 安卓端回调
+    if not HAS_TKINTER:
+        def on_android_pick_result(e):
             if not e.files:
                 return
+
             key = key_input.value.strip()
             if not key:
                 show_snack("请输入密钥！", is_error=True)
@@ -177,9 +177,14 @@ def main(page: ft.Page):
                 try:
                     with open(selected_file.path, 'rb') as f:
                         raw_bytes = f.read()
+
                     runtime_data["encoded_text"] = cipher.pack_and_encrypt(raw_bytes, selected_file.name)
                     rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-                    save_picker.save_file(file_name=f"enc_{rand_str}.txt", allowed_extensions=["txt"])
+                    
+                    android_save_picker.save_file(
+                        file_name=f"enc_{rand_str}.txt",
+                        allowed_extensions=["txt"]
+                    )
                 except Exception as err:
                     log(f"❌ 加密失败: {str(err)}")
                     show_snack(f"加密失败: {str(err)}", is_error=True)
@@ -188,16 +193,19 @@ def main(page: ft.Page):
                 try:
                     with open(selected_file.path, 'r', encoding='utf-8') as f:
                         encoded_text = f.read().strip()
+
                     restored_bytes, original_filename = cipher.decrypt_and_unpack(encoded_text)
                     runtime_data["restored_bytes"] = restored_bytes
-                    save_picker.save_file(file_name=original_filename)
+                    
+                    android_save_picker.save_file(file_name=original_filename)
                 except Exception as err:
                     log(f"❌ 解密失败: {str(err)}")
                     show_snack("解密失败！密钥错误或文件不完整。", is_error=True)
 
-        def on_mobile_save(e):
+        def on_android_save_result(e):
             if not e.path:
                 return
+
             try:
                 if runtime_data["mode"] == "encrypt":
                     with open(e.path, 'w', encoding='utf-8') as f:
@@ -214,21 +222,24 @@ def main(page: ft.Page):
                 log(f"❌ 保存文件失败: {str(err)}")
                 show_snack(f"保存失败: {str(err)}", is_error=True)
 
-        open_picker = ft.FilePicker(on_result=on_mobile_pick)
-        save_picker = ft.FilePicker(on_result=on_mobile_save)
-        page.overlay.extend([open_picker, save_picker])
+        # ✅ 修复重点：先实例化再给 on_result 赋值
+        android_open_picker = ft.FilePicker()
+        android_open_picker.on_result = on_android_pick_result
 
-    # ==========================================
-    # 核心点击逻辑
-    # ==========================================
+        android_save_picker = ft.FilePicker()
+        android_save_picker.on_result = on_android_save_result
+
+        page.overlay.extend([android_open_picker, android_save_picker])
+
+    # 按钮交互逻辑
     def start_encrypt_action(e):
         key = key_input.value.strip()
         if not key:
             show_snack("请先填写密钥！", is_error=True)
             return
 
-        if USE_DESKTOP_TK:
-            input_path = tk_get_file(title="选择要加密的文件")
+        if HAS_TKINTER:
+            input_path = tk_open_file(title="选择要加密的文件")
             if not input_path:
                 return
 
@@ -241,7 +252,7 @@ def main(page: ft.Page):
                 encoded_text = cipher.pack_and_encrypt(raw_bytes, original_filename)
                 rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
                 
-                save_path = tk_put_file(
+                save_path = tk_save_file(
                     title="选择加密文本保存位置",
                     initialfile=f"enc_{rand_str}.txt",
                     defaultextension=".txt"
@@ -259,7 +270,7 @@ def main(page: ft.Page):
                 show_snack(f"加密失败: {str(err)}", is_error=True)
         else:
             runtime_data["mode"] = "encrypt"
-            open_picker.pick_files(dialog_title="选择要加密的文件")
+            android_open_picker.pick_files(dialog_title="选择要加密的文件")
 
     def start_decrypt_action(e):
         key = key_input.value.strip()
@@ -267,8 +278,8 @@ def main(page: ft.Page):
             show_snack("请先填写密钥！", is_error=True)
             return
 
-        if USE_DESKTOP_TK:
-            input_path = tk_get_file(title="选择乱码加密文本", filetypes=[("TXT 文本", "*.txt"), ("所有文件", "*.*")])
+        if HAS_TKINTER:
+            input_path = tk_open_file(title="选择乱码加密文本", filetypes=[("TXT 文本", "*.txt"), ("所有文件", "*.*")])
             if not input_path:
                 return
 
@@ -279,7 +290,7 @@ def main(page: ft.Page):
 
                 restored_bytes, original_filename = cipher.decrypt_and_unpack(encoded_text)
 
-                save_path = tk_put_file(
+                save_path = tk_save_file(
                     title=f"保存还原的文件 (提取原名: {original_filename})",
                     initialfile=original_filename
                 )
@@ -296,7 +307,7 @@ def main(page: ft.Page):
                 show_snack("解密失败！密钥错误或文件不完整。", is_error=True)
         else:
             runtime_data["mode"] = "decrypt"
-            open_picker.pick_files(dialog_title="选择乱码加密文本", allowed_extensions=["txt"])
+            android_open_picker.pick_files(dialog_title="选择乱码加密文本", allowed_extensions=["txt"])
 
     page.add(
         ft.Text("全隐蔽文件加解密工具", size=22, weight=ft.FontWeight.BOLD),
@@ -347,8 +358,8 @@ def main(page: ft.Page):
         )
     )
 
-    env_tag = "Windows 原生窗口引擎 (Tkinter)" if USE_DESKTOP_TK else "Android 移动端引擎 (Flet Picker)"
-    log(f"工具初始化成功。当前系统激活引擎: [{env_tag}]")
+    env_name = "Windows 桌面原生引擎 (Tkinter)" if HAS_TKINTER else "Android 移动端引擎 (Flet)"
+    log(f"工具就绪。当前运行环境: [{env_name}]")
 
 
 if __name__ == "__main__":
