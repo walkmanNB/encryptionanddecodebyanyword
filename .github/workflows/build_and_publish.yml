@@ -1,0 +1,129 @@
+name: Build and Publish App (Windows EXE & Android APK)
+
+on:
+  push:
+    paths:
+      - 'test.py'            # 只有当 test.py 被更新推送时才触发
+    tags:
+      - 'v*'                 # 或者当你打 Tag (如 v1.0.0) 推送时触发
+  workflow_dispatch:          # 支持在 GitHub 网页上手动点击按钮触发
+
+jobs:
+  # ==========================================
+  # Job 1: 打包 Windows (.exe)
+  # ==========================================
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller flet
+
+      - name: Build Windows EXE with PyInstaller
+        run: |
+          pyinstaller --noconsole --onefile --name="CryptoTool_Win" test.py
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CryptoTool_Windows_EXE
+          path: dist/CryptoTool_Win.exe
+
+  # ==========================================
+  # Job 2: 打包 Android (.apk)
+  # ==========================================
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Install Flet CLI
+        run: |
+          python -m pip install --upgrade pip
+          pip install flet
+
+      - name: Build Android APK
+        run: |
+          flet build apk --output build_apk
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CryptoTool_Android_APK
+          path: build_apk/apk/*.apk
+
+  # ==========================================
+  # Job 3: 发布到 GitHub Releases
+  # ==========================================
+  publish-release:
+    name: Publish to GitHub Releases
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: CryptoTool_Windows_EXE
+          path: release_files/
+
+      - name: Download Android Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: CryptoTool_Android_APK
+          path: release_files/
+
+      - name: Generate Dynamic Release Tag & Note
+        id: tag_name
+        run: |
+          TAG="v1.0.$(date +'%Y%m%d%H%M%S')"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release and Upload Files
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_name.outputs.tag }}
+          name: "全隐蔽加解密工具 自动发布包 (${{ steps.tag_name.outputs.tag }})"
+          body: |
+            🎉 **最新版本自动打包完成！**
+            
+            - **文件包含**：
+              - 💻 Windows 端可执行程序 (`CryptoTool_Win.exe`)
+              - 📱 Android 端安装包 (`.apk`)
+            - **更新时间**：${{ env.GITHUB_SHA }}
+          draft: false
+          prerelease: false
+          files: |
+            release_files/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
