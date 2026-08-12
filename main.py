@@ -7,7 +7,7 @@ import flet as ft
 from datetime import datetime
 
 # ==========================================
-# 环境识别：仅在 Windows/Desktop 环境下导入 Tkinter
+# 环境识别：区分 Windows 桌面与 Android 移动端
 # ==========================================
 IS_ANDROID = "android" in sys.platform.lower() or os.environ.get("ANDROID_ARGUMENT") is not None
 
@@ -20,6 +20,18 @@ if not IS_ANDROID:
         HAS_TKINTER = False
 else:
     HAS_TKINTER = False
+
+# 安卓原生 Intent 支持（通过 pyjnius 调起 Android 系统文件管理器）
+HAS_ANDROID_INTENT = False
+if IS_ANDROID:
+    try:
+        from jnius import autoclass, cast
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        Intent = autoclass('android.content.Intent')
+        Uri = autoclass('android.net.Uri')
+        HAS_ANDROID_INTENT = True
+    except Exception:
+        HAS_ANDROID_INTENT = False
 
 
 class CustomCompactCipher:
@@ -101,7 +113,9 @@ class CustomCompactCipher:
         return raw_bytes, original_filename
 
 
-# Windows 桌面专用对话框函数
+# ==========================================
+# 1. Windows 桌面专用原生对话框
+# ==========================================
 def tk_open_file(title="选择文件", filetypes=[("所有文件", "*.*")]):
     root = tk.Tk()
     root.withdraw()
@@ -117,6 +131,24 @@ def tk_save_file(title="保存文件", initialfile="", defaultextension=""):
     path = filedialog.asksaveasfilename(title=title, initialfile=initialfile, defaultextension=defaultextension)
     root.destroy()
     return path
+
+
+# ==========================================
+# 2. Android 移动端原生系统文件选择器
+# ==========================================
+def android_open_file_dialog():
+    """调起 Android 原生 SAF (Storage Access Framework) 打开文件窗口"""
+    if not HAS_ANDROID_INTENT:
+        return None
+    try:
+        intent = Intent(Intent.ACTION_GET_CONTENT)
+        intent.setType("*/*")
+        intent.addCategory(Intent.CATEGORY_OPENABLE)
+        current_activity = PythonActivity.mActivity
+        current_activity.startActivityForResult(Intent.createChooser(intent, "选择文件"), 1001)
+    except Exception as e:
+        print(f"Android Native Intent Error: {e}")
+    return None
 
 
 def main(page: ft.Page):
@@ -141,6 +173,13 @@ def main(page: ft.Page):
         height=200
     )
 
+    # 路径手动/自动选择框（Android 端兼容兜底输入）
+    path_input = ft.TextField(
+        label="文件路径（Android端可直接粘贴或输入系统路径）",
+        hint_text="/sdcard/Download/example.txt",
+        visible=IS_ANDROID
+    )
+
     def log(msg: str):
         time_str = datetime.now().strftime("%H:%M:%S")
         log_list.controls.append(
@@ -157,159 +196,116 @@ def main(page: ft.Page):
         snack.open = True
         page.update()
 
-    runtime_data = {"mode": None, "encoded_text": "", "restored_bytes": b""}
-
-    # 安卓端回调
-    if not HAS_TKINTER:
-        def on_android_pick_result(e):
-            if not e.files:
-                return
-
-            key = key_input.value.strip()
-            if not key:
-                show_snack("请输入密钥！", is_error=True)
-                return
-
-            selected_file = e.files[0]
-            cipher = CustomCompactCipher(key, logger=log)
-
-            if runtime_data["mode"] == "encrypt":
-                try:
-                    with open(selected_file.path, 'rb') as f:
-                        raw_bytes = f.read()
-
-                    runtime_data["encoded_text"] = cipher.pack_and_encrypt(raw_bytes, selected_file.name)
-                    rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-                    
-                    android_save_picker.save_file(
-                        file_name=f"enc_{rand_str}.txt",
-                        allowed_extensions=["txt"]
-                    )
-                except Exception as err:
-                    log(f"❌ 加密失败: {str(err)}")
-                    show_snack(f"加密失败: {str(err)}", is_error=True)
-
-            elif runtime_data["mode"] == "decrypt":
-                try:
-                    with open(selected_file.path, 'r', encoding='utf-8') as f:
-                        encoded_text = f.read().strip()
-
-                    restored_bytes, original_filename = cipher.decrypt_and_unpack(encoded_text)
-                    runtime_data["restored_bytes"] = restored_bytes
-                    
-                    android_save_picker.save_file(file_name=original_filename)
-                except Exception as err:
-                    log(f"❌ 解密失败: {str(err)}")
-                    show_snack("解密失败！密钥错误或文件不完整。", is_error=True)
-
-        def on_android_save_result(e):
-            if not e.path:
-                return
-
-            try:
-                if runtime_data["mode"] == "encrypt":
-                    with open(e.path, 'w', encoding='utf-8') as f:
-                        f.write(runtime_data["encoded_text"])
-                    log(f"🎉 加密文件已保存到: {e.path}")
-                    show_snack("加密文件导出成功！")
-
-                elif runtime_data["mode"] == "decrypt":
-                    with open(e.path, 'wb') as f:
-                        f.write(runtime_data["restored_bytes"])
-                    log(f"🎉 解密还原成功，文件已保存到: {e.path}")
-                    show_snack("文件已无损还原！")
-            except Exception as err:
-                log(f"❌ 保存文件失败: {str(err)}")
-                show_snack(f"保存失败: {str(err)}", is_error=True)
-
-        # ✅ 修复重点：先实例化再给 on_result 赋值
-        android_open_picker = ft.FilePicker()
-        android_open_picker.on_result = on_android_pick_result
-
-        android_save_picker = ft.FilePicker()
-        android_save_picker.on_result = on_android_save_result
-
-        page.overlay.extend([android_open_picker, android_save_picker])
-
-    # 按钮交互逻辑
+    # 触发加密
     def start_encrypt_action(e):
         key = key_input.value.strip()
         if not key:
             show_snack("请先填写密钥！", is_error=True)
             return
 
+        input_path = ""
+        save_path = ""
+
         if HAS_TKINTER:
+            # 🖥️ Windows 原生文件窗口
             input_path = tk_open_file(title="选择要加密的文件")
             if not input_path:
                 return
-
-            cipher = CustomCompactCipher(key, logger=log)
-            try:
-                original_filename = os.path.basename(input_path)
-                with open(input_path, 'rb') as f:
-                    raw_bytes = f.read()
-
-                encoded_text = cipher.pack_and_encrypt(raw_bytes, original_filename)
-                rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
-                
-                save_path = tk_save_file(
-                    title="选择加密文本保存位置",
-                    initialfile=f"enc_{rand_str}.txt",
-                    defaultextension=".txt"
-                )
-                if not save_path:
-                    return
-
-                with open(save_path, 'w', encoding='utf-8') as f:
-                    f.write(encoded_text)
-
-                log(f"🎉 加密文件已保存到: {save_path}")
-                show_snack("加密文件导出成功！")
-            except Exception as err:
-                log(f"❌ 加密失败: {str(err)}")
-                show_snack(f"加密失败: {str(err)}", is_error=True)
+            
+            rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+            save_path = tk_save_file(
+                title="选择加密文本保存位置",
+                initialfile=f"enc_{rand_str}.txt",
+                defaultextension=".txt"
+            )
+            if not save_path:
+                return
         else:
-            runtime_data["mode"] = "encrypt"
-            android_open_picker.pick_files(dialog_title="选择要加密的文件")
+            # 📱 Android 原生调用与路径逻辑
+            if HAS_ANDROID_INTENT:
+                android_open_file_dialog()
 
+            input_path = path_input.value.strip()
+            if not input_path or not os.path.exists(input_path):
+                show_snack("请在上方文本框中输入或粘贴要加密的文件完整路径！", is_error=True)
+                return
+            
+            rand_str = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+            save_dir = os.path.dirname(input_path)
+            save_path = os.path.join(save_dir, f"enc_{rand_str}.txt")
+
+        # 执行加密核心计算
+        cipher = CustomCompactCipher(key, logger=log)
+        try:
+            original_filename = os.path.basename(input_path)
+            with open(input_path, 'rb') as f:
+                raw_bytes = f.read()
+
+            encoded_text = cipher.pack_and_encrypt(raw_bytes, original_filename)
+
+            with open(save_path, 'w', encoding='utf-8') as f:
+                f.write(encoded_text)
+
+            log(f"🎉 加密文件已保存到: {save_path}")
+            show_snack("加密文件导出成功！")
+        except Exception as err:
+            log(f"❌ 加密失败: {str(err)}")
+            show_snack(f"加密失败: {str(err)}", is_error=True)
+
+    # 触发解密
     def start_decrypt_action(e):
         key = key_input.value.strip()
         if not key:
             show_snack("请先填写密钥！", is_error=True)
             return
 
+        input_path = ""
+
         if HAS_TKINTER:
+            # 🖥️ Windows 原生文件窗口
             input_path = tk_open_file(title="选择乱码加密文本", filetypes=[("TXT 文本", "*.txt"), ("所有文件", "*.*")])
             if not input_path:
                 return
+        else:
+            # 📱 Android 原生调用
+            if HAS_ANDROID_INTENT:
+                android_open_file_dialog()
 
-            cipher = CustomCompactCipher(key, logger=log)
-            try:
-                with open(input_path, 'r', encoding='utf-8') as f:
-                    encoded_text = f.read().strip()
+            input_path = path_input.value.strip()
+            if not input_path or not os.path.exists(input_path):
+                show_snack("请在上方文本框中输入或粘贴要解密的文件完整路径！", is_error=True)
+                return
 
-                restored_bytes, original_filename = cipher.decrypt_and_unpack(encoded_text)
+        cipher = CustomCompactCipher(key, logger=log)
+        try:
+            with open(input_path, 'r', encoding='utf-8') as f:
+                encoded_text = f.read().strip()
 
+            restored_bytes, original_filename = cipher.decrypt_and_unpack(encoded_text)
+
+            if HAS_TKINTER:
                 save_path = tk_save_file(
                     title=f"保存还原的文件 (提取原名: {original_filename})",
                     initialfile=original_filename
                 )
-                if not save_path:
-                    return
+            else:
+                save_dir = os.path.dirname(input_path)
+                save_path = os.path.join(save_dir, original_filename)
 
-                with open(save_path, 'wb') as f:
-                    f.write(restored_bytes)
+            if not save_path:
+                return
 
-                log(f"🎉 解密还原成功，文件已保存到: {save_path}")
-                show_snack("文件已无损还原！")
-            except Exception as err:
-                log(f"❌ 解密失败: {str(err)}")
-                show_snack("解密失败！密钥错误或文件不完整。", is_error=True)
-        else:
-            runtime_data["mode"] = "decrypt"
-            android_open_picker.pick_files(dialog_title="选择乱码加密文本", allowed_extensions=["txt"])
+            with open(save_path, 'wb') as f:
+                f.write(restored_bytes)
 
-    page.add(
+            log(f"🎉 解密还原成功，文件已保存到: {save_path}")
+            show_snack("文件已无损还原！")
+        except Exception as err:
+            log(f"❌ 解密失败: {str(err)}")
+            show_snack("解密失败！密钥错误或文件不完整。", is_error=True)
+
+    # 界面构建
+    controls_list = [
         ft.Text("全隐蔽文件加解密工具", size=22, weight=ft.FontWeight.BOLD),
         ft.Text("藏入文件原名 | 输出混淆文本", size=12, color=ft.Colors.GREY_400),
         ft.Divider(),
@@ -322,12 +318,28 @@ def main(page: ft.Page):
                 ]),
                 padding=15
             )
-        ),
-        
+        )
+    ]
+
+    # 安卓环境下追加路径输入框
+    if IS_ANDROID:
+        controls_list.append(
+            ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Text("2. 文件路径", weight=ft.FontWeight.BOLD),
+                        path_input
+                    ]),
+                    padding=15
+                )
+            )
+        )
+
+    controls_list.extend([
         ft.Card(
             content=ft.Container(
                 content=ft.Column([
-                    ft.Text("2. 操作区域", weight=ft.FontWeight.BOLD),
+                    ft.Text("3. 操作区域", weight=ft.FontWeight.BOLD),
                     ft.Row([
                         ft.ElevatedButton(
                             "🔒 加密文件（隐藏原名）",
@@ -350,15 +362,23 @@ def main(page: ft.Page):
         ft.Card(
             content=ft.Container(
                 content=ft.Column([
-                    ft.Text("3. 运行日志", weight=ft.FontWeight.BOLD),
+                    ft.Text("4. 运行日志", weight=ft.FontWeight.BOLD),
                     log_container
                 ]),
                 padding=15
             )
         )
-    )
+    ])
 
-    env_name = "Windows 桌面原生引擎 (Tkinter)" if HAS_TKINTER else "Android 移动端引擎 (Flet)"
+    page.add(*controls_list)
+
+    if HAS_TKINTER:
+        env_name = "Windows 桌面原生引擎 (Tkinter)"
+    elif HAS_ANDROID_INTENT:
+        env_name = "Android 原生 Intent 引擎"
+    else:
+        env_name = "Android 路径模式"
+
     log(f"工具就绪。当前运行环境: [{env_name}]")
 
 
