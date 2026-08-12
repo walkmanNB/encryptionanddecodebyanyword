@@ -38,7 +38,7 @@ jobs:
           path: dist/EncryptionTool_Win.exe
 
   # ==========================================
-  # 2. 打包 Android APK (修复 Flutter SDK 依赖与非交互指令)
+  # 2. 打包 Android APK
   # ==========================================
   build-android:
     name: Build Android APK
@@ -70,8 +70,8 @@ jobs:
 
       - name: Build Android APK
         run: |
-          # 增加 --no-interactive 静默确认，防止在 CI 环境中触发 EOFError 崩溃
-          flet build apk --no-interactive --verbose
+          # 使用 yes 命令自动回应所有交互式询问，防止引发 EOFError
+          yes | flet build apk --verbose
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4.6.1
