@@ -3,88 +3,85 @@ name: Build and Publish App (Windows EXE & Android APK)
 on:
   push:
     paths:
-      - 'main.py'
-  workflow_dispatch:
+      - 'test.py'
+  workflow_dispatch:          # 支持在 GitHub 网页上手动点击“立即打包”
 
 jobs:
-  # 1. 打包 Windows EXE
+  # ==========================================
+  # 1. 打包 Windows EXE (适配新版 Flet 隐藏依赖)
+  # ==========================================
   build-windows:
     name: Build Windows EXE
     runs-on: windows-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Verify Repository Files
-        shell: powershell
-        run: |
-          Get-ChildItem -Path .
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller flet
+          pip install pyinstaller flet flet-desktop
 
       - name: Build Windows EXE
-        shell: powershell
         run: |
-          pyinstaller --noconsole --onefile --name="EncryptionTool_Win" "$env:GITHUB_WORKSPACE\main.py"
+          pyinstaller --noconsole --onefile --hidden-import=flet_desktop --hidden-import=flet.canvas --name="EncryptionTool_Win" test.py
 
       - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: EncryptionTool_Windows_EXE
           path: dist/EncryptionTool_Win.exe
 
-  # 2. 打包 Android APK
+  # ==========================================
+  # 2. 打包 Android APK (基于 Flutter & Flet CLI)
+  # ==========================================
   build-android:
     name: Build Android APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Set up Java JDK 17
-        uses: actions/setup-java@v5
+      - name: Set up Java JDK
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-
       - name: Set up Flutter SDK
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Install Python & Flet
+      - name: Install Flet CLI Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flet
+          pip install flet flet-desktop
 
-      # 采用 Flet 默认标准 main.py 构建
       - name: Build Android APK
         run: |
           flet build apk --verbose
 
       - name: Upload Android Artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: EncryptionTool_Android_APK
           path: build/apk/*.apk
 
-  # 3. 自动发布到 Releases 页面
+  # ==========================================
+  # 3. 自动发布到 GitHub Releases 页面
+  # ==========================================
   publish-release:
     name: Publish to GitHub Releases
     needs: [build-windows, build-android]
@@ -93,13 +90,13 @@ jobs:
       contents: write
     steps:
       - name: Download Windows Artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
           name: EncryptionTool_Windows_EXE
           path: release_files/
 
       - name: Download Android Artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
           name: EncryptionTool_Android_APK
           path: release_files/
@@ -114,13 +111,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_name.outputs.tag }}
-          name: "全隐蔽加解密工具全平台版本 (${{ steps.tag_name.outputs.tag }})"
+          name: "任意字符/歌词密钥加解密工具 (${{ steps.tag_name.outputs.tag }})"
           body: |
-            🎉 **云端自动打包构建完成！**
+            🎉 **云端自动打包完成！**
             
-            包含以下软件包：
-            - 💻 **Windows 独立执行程序**: `EncryptionTool_Win.exe`
-            - 📱 **Android 原生安装包**: `.apk`
+            包含以下最新编译出的无依赖安装包：
+            - 💻 **Windows 端**: `EncryptionTool_Win.exe` (已包含全套桌面渲染组件)
+            - 📱 **Android 端**: `.apk`
           draft: false
           prerelease: false
           files: release_files/*
