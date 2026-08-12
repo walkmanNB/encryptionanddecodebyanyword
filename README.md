@@ -44,4 +44,4 @@
 确保已安装 Python 3.8+，运行主程序：
 
 ```bash
-python test.py
+python main.py
