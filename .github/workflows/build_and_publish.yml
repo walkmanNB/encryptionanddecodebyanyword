@@ -3,15 +3,11 @@ name: Build and Publish App (Windows EXE & Android APK)
 on:
   push:
     paths:
-      - 'test.py'            # 只有当 test.py 被更新推送时才触发
-    tags:
-      - 'v*'                 # 或者当你打 Tag (如 v1.0.0) 推送时触发
-  workflow_dispatch:          # 支持在 GitHub 网页上手动点击按钮触发
+      - 'test.py'
+  workflow_dispatch:
 
 jobs:
-  # ==========================================
-  # Job 1: 打包 Windows (.exe)
-  # ==========================================
+  # 1. 打包 Windows EXE
   build-windows:
     name: Build Windows EXE
     runs-on: windows-latest
@@ -29,19 +25,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller flet
 
-      - name: Build Windows EXE with PyInstaller
+      - name: Build Windows EXE
         run: |
-          pyinstaller --noconsole --onefile --name="CryptoTool_Win" test.py
+          pyinstaller --noconsole --onefile --name="EncryptionTool_Win" test.py
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CryptoTool_Windows_EXE
-          path: dist/CryptoTool_Win.exe
+          name: EncryptionTool_Windows_EXE
+          path: dist/EncryptionTool_Win.exe
 
-  # ==========================================
-  # Job 2: 打包 Android (.apk)
-  # ==========================================
+  # 2. 打包 Android APK
   build-android:
     name: Build Android APK
     runs-on: ubuntu-latest
@@ -54,36 +48,40 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Set up Java JDK
-        uses: actions/setup-java@v4
+      # 升级到 setup-java@v5 消除警告
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
 
+      # 自动配置 Android SDK 环境
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 部署 Flutter 环境
       - name: Set up Flutter SDK
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Install Flet CLI
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install flet
 
       - name: Build Android APK
         run: |
-          flet build apk --output build_apk
+          flet build apk --verbose
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CryptoTool_Android_APK
-          path: build_apk/apk/*.apk
+          name: EncryptionTool_Android_APK
+          path: build/apk/*.apk
 
-  # ==========================================
-  # Job 3: 发布到 GitHub Releases
-  # ==========================================
+  # 3. 发布到 Releases 页面
   publish-release:
     name: Publish to GitHub Releases
     needs: [build-windows, build-android]
@@ -94,36 +92,34 @@ jobs:
       - name: Download Windows Artifact
         uses: actions/download-artifact@v4
         with:
-          name: CryptoTool_Windows_EXE
+          name: EncryptionTool_Windows_EXE
           path: release_files/
 
       - name: Download Android Artifact
         uses: actions/download-artifact@v4
         with:
-          name: CryptoTool_Android_APK
+          name: EncryptionTool_Android_APK
           path: release_files/
 
-      - name: Generate Dynamic Release Tag & Note
+      - name: Generate Dynamic Release Tag
         id: tag_name
         run: |
           TAG="v1.0.$(date +'%Y%m%d%H%M%S')"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release and Upload Files
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag_name.outputs.tag }}
-          name: "全隐蔽加解密工具 自动发布包 (${{ steps.tag_name.outputs.tag }})"
+          name: "任意字符/歌词密钥加解密工具 (${{ steps.tag_name.outputs.tag }})"
           body: |
-            🎉 **最新版本自动打包完成！**
+            🎉 **云端自动打包完成！**
             
-            - **文件包含**：
-              - 💻 Windows 端可执行程序 (`CryptoTool_Win.exe`)
-              - 📱 Android 端安装包 (`.apk`)
-            - **更新时间**：${{ env.GITHUB_SHA }}
+            包含以下最新编译出的无依赖安装包：
+            - 💻 **Windows 可执行程序**: `EncryptionTool_Win.exe`
+            - 📱 **Android 安装包**: `.apk`
           draft: false
           prerelease: false
-          files: |
-            release_files/*
+          files: release_files/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
